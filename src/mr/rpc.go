@@ -7,24 +7,11 @@ package mr
 //
 
 import (
+	"log"
 	"os"
 	"strconv"
 )
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
-
-// Add your RPC definitions here.
 type TaskType string
 
 const (
@@ -60,4 +47,13 @@ func coordinatorSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
+}
+
+// debug flag
+const isDebug = false
+
+func debug(msg string, args ...interface{}) {
+	if isDebug {
+		log.Printf(msg, args...)
+	}
 }

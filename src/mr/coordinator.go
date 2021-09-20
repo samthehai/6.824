@@ -27,8 +27,7 @@ const (
 )
 
 type Coordinator struct {
-	// Your definitions here.
-	sync.Mutex
+	sync.RWMutex
 	// list of filenames
 	files []string
 	// number of reducer
@@ -41,27 +40,16 @@ type Coordinator struct {
 	reduceTaskStatuses map[int]TaskStatus
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
 func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
-	c.Lock()
 	reply.TaskID = -1
 
+	c.Lock()
+	debug("RequestTask - map locked 1")
 	switch c.phrase {
 	case MapPhrase:
 		for idx, t := range c.mapTaskStatuses {
 			if t == NotStart {
-				log.Printf("assigned map taskid=%v", idx)
+				debug("assigned map taskid=%v", idx)
 				reply.TaskID = idx
 				reply.File = c.files[idx]
 				reply.TaskType = MapTask
@@ -74,13 +62,14 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 					wg.Add(1)
 
 					timeout := time.Second * 10
-					if c.waitTaskTimeout(MapTask, idx, &wg, timeout) {
-						log.Printf("map task with id=%v is timeouted, turn it to NOT_START", idx)
+					if c.waitTaskCheckTimeout(MapTask, idx, &wg, timeout) {
 						c.Lock()
+						debug("RequestTask - map locked 2")
 						c.mapTaskStatuses[idx] = NotStart
 						c.Unlock()
-					} else {
-						log.Printf("map task with id=%v completed", idx)
+						debug("RequestTask - map released lock 2")
+
+						debug("map task with id=%v is timeout, reseted status", idx)
 					}
 				}()
 				break
@@ -88,12 +77,12 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 		}
 
 		if reply.TaskID == -1 {
-			log.Printf("there no available map task")
+			debug("there no available map task")
 		}
 	case ReducePhrase:
 		for idx, t := range c.reduceTaskStatuses {
 			if t == NotStart {
-				log.Printf("assigned reduce taskid=%v", idx)
+				debug("assigned reduce taskid=%v", idx)
 				reply.TaskID = idx
 				reply.TaskType = ReduceTask
 				reply.NMap = len(c.files)
@@ -104,13 +93,14 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 					wg.Add(1)
 
 					timeout := time.Second * 10
-					if c.waitTaskTimeout(ReduceTask, idx, &wg, timeout) {
-						log.Printf("map task with id=%v is timeouted, turn it to NOT_START", idx)
+					if c.waitTaskCheckTimeout(ReduceTask, idx, &wg, timeout) {
 						c.Lock()
+						debug("RequestTask - reduce locked 2")
 						c.reduceTaskStatuses[idx] = NotStart
 						c.Unlock()
-					} else {
-						log.Printf("map task with id=%v completed", idx)
+						debug("RequestTask - reduce released lock 2")
+
+						debug("map task with id=%v is timeout, reseted status", idx)
 					}
 				}()
 				break
@@ -118,62 +108,95 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 		}
 
 		if reply.TaskID == -1 {
-			log.Printf("there no available reduce task")
+			debug("there no available reduce task")
 		}
 	case MergePhrase:
 		// TODO: implement this
-		log.Printf("server is doing merge job, please wait...")
+		debug("server is doing merge job, please wait...")
 	default:
 		log.Fatalf("invalid phrase: %v", c.phrase)
 	}
 	c.Unlock()
+	debug("RequestTask - map released lock 1")
 
 	return nil
 }
 
 func (c *Coordinator) ReportTaskResult(args *ReportTaskResultArgs, reply *ReportTaskResultReply) error {
-	log.Printf("tasktype=%v taskid=%v, result=%v", args.TaskType, args.TaskID, args.Result)
-	c.Lock()
+	debug("tasktype=%v taskid=%v, result=%v", args.TaskType, args.TaskID, args.Result)
+
 	switch args.TaskType {
 	case MapTask:
+		c.RLock()
+		debug("ReportTaskResult - map locked 1")
 		if _, ok := c.mapTaskStatuses[args.TaskID]; !ok {
-			log.Printf("invalid map task id: %v", args.TaskID)
+			debug("invalid map task id: %v", args.TaskID)
 		}
+		c.RUnlock()
+		debug("ReportTaskResult - map released lock 1")
 
+		c.Lock()
+		debug("ReportTaskResult - map locked 2")
 		if args.Result {
 			c.mapTaskStatuses[args.TaskID] = Done
 		} else {
 			c.mapTaskStatuses[args.TaskID] = NotStart
 		}
+		c.Unlock()
+		debug("ReportTaskResult - map released lock 2")
 
-		if c.isAllMapTaskDoneNonLock() {
+		if c.isAllMapTaskDone() {
+			c.Lock()
+			debug("ReportTaskResult - map locked 3")
 			c.phrase = ReducePhrase
-			log.Printf("transition to reduce phrase")
+			c.Unlock()
+			debug("ReportTaskResult - map released lock 3")
+
+			debug("transited to reduce phrase")
 		}
 	case ReduceTask:
+		c.RLock()
+		debug("ReportTaskResult - reduce locked 1")
 		if _, ok := c.reduceTaskStatuses[args.TaskID]; !ok {
-			log.Printf("invalid reduce task id: %v", args.TaskID)
+			debug("invalid reduce task id: %v", args.TaskID)
 		}
+		c.RUnlock()
+		debug("ReportTaskResult - reduce released lock 1")
 
+		c.Lock()
+		debug("ReportTaskResult - reduce locked 2")
 		if args.Result {
 			c.reduceTaskStatuses[args.TaskID] = Done
 		} else {
 			c.reduceTaskStatuses[args.TaskID] = NotStart
 		}
+		c.Unlock()
+		debug("ReportTaskResult - reduce released 2")
 
-		if c.isAllReduceTaskDoneNonLock() {
+		if c.isAllReduceTaskDone() {
+			c.Lock()
+			debug("ReportTaskResult - reduce locked 3")
 			c.phrase = MergePhrase
-			log.Printf("transition to merge phrase")
+			c.Unlock()
+			debug("ReportTaskResult - reduce released 3")
+
+			debug("transited to merge phrase")
 		}
 	default:
-		log.Printf("invalid task type: %v", args.TaskType)
+		debug("invalid task type: %v", args.TaskType)
 	}
-	c.Unlock()
 
 	return nil
 }
 
-func (c *Coordinator) isAllMapTaskDoneNonLock() bool {
+func (c *Coordinator) isAllMapTaskDone() bool {
+	c.RLock()
+	debug("isAllMapTaskDone - locked")
+	defer func() {
+		c.RUnlock()
+		debug("isAllMapTaskDone - released lock")
+	}()
+
 	for _, t := range c.mapTaskStatuses {
 		if t != Done {
 			return false
@@ -183,7 +206,14 @@ func (c *Coordinator) isAllMapTaskDoneNonLock() bool {
 	return true
 }
 
-func (c *Coordinator) isAllReduceTaskDoneNonLock() bool {
+func (c *Coordinator) isAllReduceTaskDone() bool {
+	c.RLock()
+	debug("isAllReduceTaskDone - locked")
+	defer func() {
+		c.RUnlock()
+		debug("isAllReduceTaskDone - released lock")
+	}()
+
 	for _, t := range c.reduceTaskStatuses {
 		if t != Done {
 			return false
@@ -194,7 +224,8 @@ func (c *Coordinator) isAllReduceTaskDoneNonLock() bool {
 }
 
 func (c *Coordinator) isTaskDone(taskType TaskType, taskID int) bool {
-	c.Lock()
+	c.RLock()
+	debug("isTaskDone - locked")
 	var taskStatus TaskStatus
 	switch taskType {
 	case MapTask:
@@ -202,16 +233,17 @@ func (c *Coordinator) isTaskDone(taskType TaskType, taskID int) bool {
 	case ReduceTask:
 		taskStatus = c.reduceTaskStatuses[taskID]
 	default:
-		log.Printf("invalid taskType: %v", taskType)
+		debug("invalid taskType: %v", taskType)
 	}
-	c.Unlock()
+	c.RUnlock()
+	debug("isTaskDone - released")
 
 	return taskStatus == Done
 }
 
 // waitTaskDoneWithTimeout waits for the waitgroup for the specified max timeout.
 // Returns true if waiting timed out.
-func (c *Coordinator) waitTaskTimeout(
+func (c *Coordinator) waitTaskCheckTimeout(
 	taskType TaskType,
 	taskID int,
 	wg *sync.WaitGroup,
@@ -256,10 +288,11 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	// TODO: implement merge phrase and change this
-	c.Lock()
+	c.RLock()
+	debug("Done - locked")
 	ret := c.phrase == MergePhrase
-	c.Unlock()
+	c.RUnlock()
+	debug("Done - released lock")
 
 	return ret
 }

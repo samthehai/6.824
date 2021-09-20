@@ -45,7 +45,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 
 		if reply.TaskID == -1 {
-			log.Fatalf("there is no available task, go to sleep...")
+			debug("there is no available task, go to sleep...")
 			time.Sleep(time.Second)
 			continue
 		}
@@ -81,7 +81,7 @@ func doMap(
 	filename string,
 	mapf func(string, string) []KeyValue,
 ) {
-	log.Printf("doMap: %d-%d", mapTaskNumber, nReduce)
+	debug("doMap: %d-%d", mapTaskNumber, nReduce)
 
 	content, err := ioutil.ReadFile(filename)
 	if err != nil {
@@ -120,7 +120,7 @@ func doReduce(
 	nMap int, // the number of map tasks that were run ("M" in the paper)
 	reduceF func(key string, values []string) string,
 ) {
-	log.Printf("doReduce: %d", reduceTaskNumber)
+	debug("doReduce: %d", reduceTaskNumber)
 	kvList := make([]KeyValue, 0)
 
 	for i := 0; i < nMap; i++ {
@@ -169,29 +169,6 @@ func intermediateFileName(mapTask int, reduceTask int) string {
 
 func reduceOutputFileName(reduceTask int) string {
 	return fmt.Sprintf("mr-out-%v", reduceTask)
-}
-
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Coordinator.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
 }
 
 //
